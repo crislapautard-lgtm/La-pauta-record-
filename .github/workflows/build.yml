@@ -3,7 +3,8 @@ name: Crear La Pauta Capture
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
@@ -19,13 +20,15 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar dependencias
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt
 
       - name: Verificar módulos
+        shell: pwsh
         run: |
-          python -c "import numpy, cv2, mss, sounddevice, soundfile, cffi; print('TODOS LOS MODULOS CORRECTOS')"
+          python -c "import numpy, cv2, mss, sounddevice, soundfile; print('MODULOS CORRECTOS')"
 
       - name: Descargar FFmpeg
         shell: pwsh
@@ -36,31 +39,68 @@ jobs:
 
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
 
-          $ffmpeg = Get-ChildItem `
-            -Path ffmpeg_temp `
-            -Filter ffmpeg.exe `
-            -Recurse |
+          $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter ffmpeg.exe -Recurse |
             Select-Object -First 1
 
-          if ($null -eq $ffmpeg) {
-            throw "No se encontró ffmpeg.exe"
+          if (-not $ffmpeg) {
+            throw "ERROR: No se encontró ffmpeg.exe"
           }
 
           Copy-Item $ffmpeg.FullName -Destination ffmpeg.exe
 
-      - name: Crear EXE
+          if (-not (Test-Path ffmpeg.exe)) {
+            throw "ERROR: No se pudo copiar FFmpeg"
+          }
+
+      - name: Crear EXE La Pauta Capture
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name LaPautaCapture --add-binary "ffmpeg.exe;." --collect-all numpy --collect-all cv2 --collect-all mss --collect-all sounddevice --collect-all soundfile --collect-all cffi --hidden-import _cffi_backend main.py
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name LaPautaCapture `
+            --add-binary "ffmpeg.exe;." `
+            --collect-all numpy `
+            --collect-all cv2 `
+            --collect-all mss `
+            --collect-all sounddevice `
+            --collect-all soundfile `
+            --hidden-import _cffi_backend `
+            main.py
+
+          if (-not (Test-Path "dist\LaPautaCapture.exe")) {
+            throw "ERROR: PyInstaller no creó LaPautaCapture.exe"
+          }
 
       - name: Instalar Inno Setup
+        shell: pwsh
         run: choco install innosetup -y
 
+      - name: Crear carpeta del instalador
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer_output
+
       - name: Crear instalador
+        shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador.iss
 
-      - name: Subir instalador
+          if ($LASTEXITCODE -ne 0) {
+            throw "ERROR: Inno Setup no pudo crear el instalador"
+          }
+
+          if (-not (Test-Path "installer_output\LaPautaCaptureSetup.exe")) {
+            throw "ERROR: No se encontró el instalador generado"
+          }
+
+      - name: Subir instalador a Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: LaPautaCaptureSetup
-          path: dist/LaPautaCaptureSetup.exe
+          path: installer_output/LaPautaCaptureSetup.exe
+          if-no-files-found: error
+          retention-days: 14
+          
