@@ -3,428 +3,321 @@ import os
 import sys
 import time
 import shutil
+import tempfile
 import threading
 import subprocess
-import queue
-from pathlib import Path
-from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import filedialog, messagebox
 
 import numpy as np
+import cv2
 import mss
-import imageio_ffmpeg
-import soundcard as sc
+import sounddevice as sd
 import soundfile as sf
 
 
-BG = "#15191d"
-PANEL = "#20272d"
-PANEL2 = "#29333a"
-ACCENT = "#35d6c2"
-WHITE = "#f1f5f6"
-MUTED = "#93a1a8"
-RED = "#ff555d"
-
-WIDTH = 1280
-HEIGHT = 720
-SAMPLE_RATE = 48000
+APP_NAME = "La Pauta Capture"
+FPS = 6
+SCREEN_SCALE = 0.35
+AUDIO_RATE = 22050
+AUDIO_CHANNELS = 1
 
 
-def output_folder():
-    folder = Path.home() / "Videos" / "LaPauta Capture"
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
+def find_ffmpeg():
+    possible_paths = []
 
+    if getattr(sys, "frozen", False):
+        possible_paths.append(
+            os.path.join(sys._MEIPASS, "ffmpeg.exe")
+        )
+        possible_paths.append(
+            os.path.join(os.path.dirname(sys.executable), "ffmpeg.exe")
+        )
 
-def audio_worker(device, path, channels, stop_event, errors):
-    try:
-        with sf.SoundFile(
-            str(path),
-            mode="w",
-            samplerate=SAMPLE_RATE,
-            channels=channels,
-            subtype="PCM_16"
-        ) as wav:
+    possible_paths.append(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")
+    )
 
-            with device.recorder(
-                samplerate=SAMPLE_RATE,
-                channels=channels
-            ) as recorder:
+    for path in possible_paths:
+        if os.path.isfile(path):
+            return path
 
-                while not stop_event.is_set():
-                    data = recorder.record(numframes=1024)
-
-                    if data.ndim == 1:
-                        data = data.reshape(-1, 1)
-
-                    if data.shape[1] == 1 and channels == 2:
-                        data = np.repeat(data, 2, axis=1)
-
-                    if data.shape[1] > channels:
-                        data = data[:, :channels]
-
-                    if data.shape[1] < channels:
-                        data = np.repeat(data, channels, axis=1)
-
-                    wav.write(np.clip(data, -1, 1))
-
-    except Exception as exc:
-        errors.append(str(exc))
+    return shutil.which("ffmpeg")
 
 
 class LaPautaCapture:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("LaPauta Capture Studio")
-        self.root.geometry("850x610")
-        self.root.minsize(760, 560)
-        self.root.configure(bg=BG)
+        self.root.title(APP_NAME)
+        self.root.geometry("440x270")
+        self.root.resizable(False, False)
+        self.root.configure(bg="#17191c")
 
         self.recording = False
         self.stop_event = threading.Event()
-        self.worker = None
-        self.start_time = 0
-        self.errors = []
+        self.capture_thread = None
 
-        self.fps = tk.IntVar(value=8)
-        self.resolution = tk.StringVar(value="720p")
-        self.capture_mic = tk.BooleanVar(value=True)
-        self.capture_system = tk.BooleanVar(value=True)
+        self.audio_stream = None
+        self.audio_file = None
+        self.audio_path = None
 
-        self.build_interface()
-        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+        self.output_path = None
+        self.video_path = None
+        self.temp_dir = None
 
-    def build_interface(self):
+        self.capture_error = None
+        self.audio_error = None
 
-        header = tk.Frame(self.root, bg=BG)
-        header.pack(fill="x", padx=28, pady=(23, 10))
+        self.create_interface()
 
-        tk.Label(
-            header,
+    def create_interface(self):
+        title = tk.Label(
+            self.root,
             text="LA PAUTA",
-            bg=BG,
-            fg=ACCENT,
-            font=("Arial", 12, "bold")
-        ).pack(anchor="w")
+            font=("Arial", 23, "bold"),
+            fg="#42d6c5",
+            bg="#17191c"
+        )
+        title.pack(pady=(18, 0))
 
-        tk.Label(
-            header,
+        subtitle = tk.Label(
+            self.root,
             text="CAPTURE STUDIO",
-            bg=BG,
-            fg=WHITE,
-            font=("Arial", 25, "bold")
-        ).pack(anchor="w")
-
-        tk.Label(
-            header,
-            text="SCREEN RECORDING SYSTEM  /  WINDOWS 64-BIT",
-            bg=BG,
-            fg=MUTED,
-            font=("Arial", 9)
-        ).pack(anchor="w", pady=(3, 0))
-
-        separator = tk.Frame(self.root, bg=ACCENT, height=2)
-        separator.pack(fill="x", padx=28, pady=12)
-
-        main = tk.Frame(self.root, bg=PANEL)
-        main.pack(fill="both", expand=True, padx=28, pady=10)
-
-        self.status = tk.Label(
-            main,
-            text="● SISTEMA LISTO",
-            bg=PANEL,
-            fg=ACCENT,
-            font=("Arial", 12, "bold")
+            font=("Arial", 10, "bold"),
+            fg="#eeeeee",
+            bg="#17191c"
         )
-        self.status.pack(anchor="w", padx=22, pady=(20, 12))
+        subtitle.pack(pady=(0, 16))
 
-        self.timer = tk.Label(
-            main,
-            text="00:00:00",
-            bg=PANEL,
-            fg=WHITE,
-            font=("Consolas", 35, "bold")
+        info = tk.Label(
+            self.root,
+            text="6 FPS  |  35% PANTALLA  |  COLOR NORMAL\n"
+                 "AUDIO: 22050 Hz  |  MONO  |  PCM 8 BITS",
+            font=("Arial", 9),
+            fg="#aeb8bd",
+            bg="#17191c",
+            justify="center"
         )
-        self.timer.pack(pady=15)
-
-        options = tk.Frame(main, bg=PANEL)
-        options.pack(fill="x", padx=22, pady=12)
-
-        self.add_option(
-            options, "FPS", self.fps,
-            ["8", "15", "30"]
-        )
-
-        self.add_option(
-            options, "RESOLUCIÓN", self.resolution,
-            ["720p", "1080p"]
-        )
-
-        audio = tk.Frame(main, bg=PANEL2)
-        audio.pack(fill="x", padx=22, pady=15)
-
-        tk.Label(
-            audio,
-            text="CAPTURA DE AUDIO",
-            bg=PANEL2,
-            fg=ACCENT,
-            font=("Arial", 10, "bold")
-        ).pack(anchor="w", padx=15, pady=(12, 5))
-
-        tk.Checkbutton(
-            audio,
-            text="Micrófono",
-            variable=self.capture_mic,
-            bg=PANEL2,
-            fg=WHITE,
-            selectcolor=BG,
-            activebackground=PANEL2,
-            activeforeground=ACCENT,
-            font=("Arial", 10)
-        ).pack(anchor="w", padx=15)
-
-        tk.Checkbutton(
-            audio,
-            text="Audio del sistema / DAW",
-            variable=self.capture_system,
-            bg=PANEL2,
-            fg=WHITE,
-            selectcolor=BG,
-            activebackground=PANEL2,
-            activeforeground=ACCENT,
-            font=("Arial", 10)
-        ).pack(anchor="w", padx=15, pady=(0, 12))
-
-        buttons = tk.Frame(main, bg=PANEL)
-        buttons.pack(pady=22)
+        info.pack(pady=5)
 
         self.start_button = tk.Button(
-            buttons,
-            text="●  INICIAR GRABACIÓN",
-            command=self.start_recording,
-            bg=ACCENT,
+            self.root,
+            text="INICIAR GRABACIÓN",
+            font=("Arial", 11, "bold"),
+            bg="#42d6c5",
             fg="#101719",
-            activebackground="#70eadc",
-            font=("Arial", 12, "bold"),
+            activebackground="#63e5d5",
             relief="flat",
-            padx=25,
-            pady=14,
-            cursor="hand2"
+            width=25,
+            height=2,
+            command=self.start_recording
         )
-        self.start_button.pack(side="left", padx=8)
+        self.start_button.pack(pady=(15, 8))
 
         self.stop_button = tk.Button(
-            buttons,
-            text="■  DETENER",
-            command=self.stop_recording,
-            bg="#414a50",
-            fg=WHITE,
-            activebackground="#56636b",
-            font=("Arial", 12, "bold"),
-            relief="flat",
-            padx=25,
-            pady=14,
-            cursor="hand2",
-            state="disabled"
-        )
-        self.stop_button.pack(side="left", padx=8)
-
-        footer = tk.Label(
             self.root,
-            text="LA PAUTA AUDIO  •  LOW RESOURCE RECORDING",
-            bg=BG,
-            fg=MUTED,
-            font=("Arial", 9)
+            text="DETENER Y GUARDAR",
+            font=("Arial", 10, "bold"),
+            bg="#30363c",
+            fg="#ffffff",
+            activebackground="#454d54",
+            relief="flat",
+            width=25,
+            height=2,
+            state="disabled",
+            command=self.stop_recording
         )
-        footer.pack(pady=12)
+        self.stop_button.pack(pady=5)
 
-    def add_option(self, parent, label, variable, values):
-        box = tk.Frame(parent, bg=PANEL)
-        box.pack(side="left", expand=True, fill="x", padx=5)
-
-        tk.Label(
-            box,
-            text=label,
-            bg=PANEL,
-            fg=MUTED,
-            font=("Arial", 9, "bold")
-        ).pack(anchor="w")
-
-        combo = ttk.Combobox(
-            box,
-            textvariable=variable,
-            values=values,
-            state="readonly",
-            width=12
+        self.status = tk.Label(
+            self.root,
+            text="Listo para grabar",
+            font=("Arial", 9),
+            fg="#42d6c5",
+            bg="#17191c"
         )
-        combo.pack(anchor="w", pady=7)
+        self.status.pack(pady=12)
+
+    def set_status(self, message):
+        self.status.config(text=message)
+
+    def audio_callback(self, indata, frames, timing, status):
+        if self.audio_file is not None:
+            try:
+                self.audio_file.write(indata)
+            except Exception as error:
+                self.audio_error = str(error)
+                self.stop_event.set()
+
+    def start_audio(self):
+        self.audio_path = os.path.join(
+            self.temp_dir, "audio.wav"
+        )
+
+        try:
+            self.audio_file = sf.SoundFile(
+                self.audio_path,
+                mode="w",
+                samplerate=AUDIO_RATE,
+                channels=AUDIO_CHANNELS,
+                subtype="PCM_U8"
+            )
+
+            self.audio_stream = sd.InputStream(
+                samplerate=AUDIO_RATE,
+                channels=AUDIO_CHANNELS,
+                dtype="int16",
+                callback=self.audio_callback
+            )
+
+            self.audio_stream.start()
+            return True
+
+        except Exception as error:
+            self.audio_error = str(error)
+
+            if self.audio_stream is not None:
+                try:
+                    self.audio_stream.close()
+                except Exception:
+                    pass
+
+            self.audio_stream = None
+
+            if self.audio_file is not None:
+                try:
+                    self.audio_file.close()
+                except Exception:
+                    pass
+
+            self.audio_file = None
+            return False
+
+    def close_audio(self):
+        if self.audio_stream is not None:
+            try:
+                self.audio_stream.stop()
+            except Exception:
+                pass
+
+            try:
+                self.audio_stream.close()
+            except Exception:
+                pass
+
+            self.audio_stream = None
+
+        if self.audio_file is not None:
+            try:
+                self.audio_file.close()
+            except Exception:
+                pass
+
+            self.audio_file = None
 
     def start_recording(self):
+        output = filedialog.asksaveasfilename(
+            title="Guardar grabación",
+            defaultextension=".mp4",
+            filetypes=[("Video MP4", "*.mp4")],
+            initialfile="LaPautaCapture.mp4"
+        )
 
-        if self.recording:
+        if not output:
             return
 
-        self.recording = True
-        self.stop_event.clear()
-        self.errors = []
+        ffmpeg = find_ffmpeg()
 
+        if not ffmpeg:
+            messagebox.showerror(
+                "FFmpeg no encontrado",
+                "No se encontró ffmpeg.exe.\n"
+                "Revisa la compilación de GitHub."
+            )
+            return
+
+        self.output_path = output
+        self.temp_dir = tempfile.mkdtemp(
+            prefix="LaPautaCapture_"
+        )
+
+        self.video_path = os.path.join(
+            self.temp_dir, "video.avi"
+        )
+
+        self.capture_error = None
+        self.audio_error = None
+        self.stop_event.clear()
+
+        audio_ok = self.start_audio()
+
+        self.recording = True
         self.start_button.config(state="disabled")
         self.stop_button.config(state="normal")
 
-        self.status.config(
-            text="● GRABANDO",
-            fg=RED
-        )
+        if audio_ok:
+            self.set_status("Grabando pantalla y micrófono...")
+        else:
+            self.set_status("Grabando pantalla sin audio")
 
-        self.start_time = time.time()
-        self.update_timer()
+            messagebox.showwarning(
+                "Audio no disponible",
+                "No se pudo iniciar la entrada de audio.\n"
+                "La grabación continuará sin sonido.\n\n"
+                + str(self.audio_error)
+            )
 
-        self.worker = threading.Thread(
-            target=self.record_worker,
+        self.capture_thread = threading.Thread(
+            target=self.capture_screen,
             daemon=True
         )
-        self.worker.start()
+        self.capture_thread.start()
 
-    def stop_recording(self):
-
-        if not self.recording:
-            return
-
-        self.status.config(
-            text="● FINALIZANDO ARCHIVO...",
-            fg=ACCENT
-        )
-
-        self.stop_button.config(state="disabled")
-        self.stop_event.set()
-
-    def update_timer(self):
-
-        if self.recording:
-            elapsed = int(time.time() - self.start_time)
-
-            hours = elapsed // 3600
-            minutes = (elapsed % 3600) // 60
-            seconds = elapsed % 60
-
-            self.timer.config(
-                text=f"{hours:02}:{minutes:02}:{seconds:02}"
-            )
-
-            self.root.after(500, self.update_timer)
-
-    def record_worker(self):
-
-        folder = output_folder()
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        final_file = folder / f"LaPauta_{timestamp}.mp4"
-        video_file = folder / f"video_{timestamp}.mp4"
-
-        system_wav = folder / f"system_{timestamp}.wav"
-        mic_wav = folder / f"mic_{timestamp}.wav"
-
-        audio_threads = []
+    def capture_screen(self):
+        writer = None
 
         try:
-            width, height = (
-                (1280, 720)
-                if self.resolution.get() == "720p"
-                else (1920, 1080)
-            )
-
-            fps = int(self.fps.get())
-
-            if self.capture_system.get():
-                try:
-                    speaker = sc.default_speaker()
-
-                    loopback = sc.get_microphone(
-                        speaker.name,
-                        include_loopback=True
-                    )
-
-                    thread = threading.Thread(
-                        target=audio_worker,
-                        args=(
-                            loopback,
-                            system_wav,
-                            2,
-                            self.stop_event,
-                            self.errors
-                        ),
-                        daemon=True
-                    )
-
-                    thread.start()
-                    audio_threads.append(thread)
-
-                except Exception as exc:
-                    self.errors.append(
-                        "Audio del sistema: " + str(exc)
-                    )
-
-            if self.capture_mic.get():
-                try:
-                    microphone = sc.default_microphone()
-
-                    thread = threading.Thread(
-                        target=audio_worker,
-                        args=(
-                            microphone,
-                            mic_wav,
-                            1,
-                            self.stop_event,
-                            self.errors
-                        ),
-                        daemon=True
-                    )
-
-                    thread.start()
-                    audio_threads.append(thread)
-
-                except Exception as exc:
-                    self.errors.append(
-                        "Micrófono: " + str(exc)
-                    )
-
-            ffmpeg_writer = imageio_ffmpeg.write_frames(
-                str(video_file),
-                (width, height),
-                fps=fps,
-                codec="libx264",
-                pix_fmt_in="rgb24",
-                quality=8,
-                macro_block_size=1,
-                output_params=[
-                    "-preset", "ultrafast",
-                    "-crf", "30",
-                    "-pix_fmt", "yuv420p"
-                ],
-                ffmpeg_log_level="error"
-            )
-
-            ffmpeg_writer.send(None)
-
-            interval = 1.0 / fps
-            next_frame = time.monotonic()
-
             with mss.mss() as screen:
+                monitor = screen.monitors[1]
 
-                monitor = screen.monitors[0]
+                width = max(
+                    2,
+                    int(monitor["width"] * SCREEN_SCALE)
+                )
+                height = max(
+                    2,
+                    int(monitor["height"] * SCREEN_SCALE)
+                )
+
+                width -= width % 2
+                height -= height % 2
+
+                fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+
+                writer = cv2.VideoWriter(
+                    self.video_path,
+                    fourcc,
+                    FPS,
+                    (width, height)
+                )
+
+                if not writer.isOpened():
+                    raise RuntimeError(
+                        "No se pudo crear el archivo de video."
+                    )
+
+                interval = 1.0 / FPS
 
                 while not self.stop_event.is_set():
+                    start_time = time.monotonic()
 
-                    screenshot = np.asarray(
-                        screen.grab(monitor)
+                    image = np.array(screen.grab(monitor))
+
+                    frame = cv2.cvtColor(
+                        image,
+                        cv2.COLOR_BGRA2BGR
                     )
-
-                    frame = screenshot[:, :, :3][:, :, ::-1]
-
-                    import cv2
 
                     frame = cv2.resize(
                         frame,
@@ -432,188 +325,171 @@ class LaPautaCapture:
                         interpolation=cv2.INTER_AREA
                     )
 
-                    ffmpeg_writer.send(
-                        np.ascontiguousarray(frame).tobytes()
-                    )
+                    writer.write(frame)
 
-                    next_frame += interval
+                    elapsed = time.monotonic() - start_time
+                    wait_time = max(0, interval - elapsed)
 
-                    delay = next_frame - time.monotonic()
+                    self.stop_event.wait(wait_time)
 
-                    if delay > 0:
-                        self.stop_event.wait(delay)
-                    else:
-                        next_frame = time.monotonic()
-
-            ffmpeg_writer.close()
-
-            for thread in audio_threads:
-                thread.join(timeout=10)
-
-            self.finish_recording(
-                video_file,
-                system_wav,
-                mic_wav,
-                final_file
-            )
-
-        except Exception as exc:
-
-            self.errors.append(str(exc))
-
+        except Exception as error:
+            self.capture_error = str(error)
             self.stop_event.set()
 
-            self.root.after(
-                0,
-                self.recording_failed,
-                str(exc)
-            )
-
-    def finish_recording(
-        self,
-        video_file,
-        system_wav,
-        mic_wav,
-        final_file
-    ):
-
-        try:
-            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-
-            audio_files = []
-
-            if system_wav.exists() and system_wav.stat().st_size > 100:
-                audio_files.append(system_wav)
-
-            if mic_wav.exists() and mic_wav.stat().st_size > 100:
-                audio_files.append(mic_wav)
-
-            if audio_files:
-
-                command = [ffmpeg, "-y", "-i", str(video_file)]
-
-                for audio in audio_files:
-                    command.extend(["-i", str(audio)])
-
-                if len(audio_files) == 2:
-                    command.extend([
-                        "-filter_complex",
-                        "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0[a]",
-                        "-map", "0:v",
-                        "-map", "[a]"
-                    ])
-                else:
-                    command.extend([
-                        "-map", "0:v",
-                        "-map", "1:a"
-                    ])
-
-                command.extend([
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-b:a", "128k",
-                    "-shortest",
-                    str(final_file)
-                ])
-
-                subprocess.run(
-                    command,
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE
-                )
-
-                video_file.unlink(missing_ok=True)
-
-            else:
-                shutil.move(str(video_file), str(final_file))
-
-            system_wav.unlink(missing_ok=True)
-            mic_wav.unlink(missing_ok=True)
+        finally:
+            if writer is not None:
+                writer.release()
 
             self.root.after(
                 0,
-                self.recording_finished,
-                str(final_file)
+                self.capture_finished
             )
 
-        except Exception as exc:
-
-            self.errors.append(
-                "Finalización de audio/vídeo: " + str(exc)
-            )
-
-            if video_file.exists():
-                shutil.move(str(video_file), str(final_file))
-
-            self.root.after(
-                0,
-                self.recording_finished,
-                str(final_file)
-            )
-
-    def recording_finished(self, path):
-
-        self.recording = False
-
-        self.start_button.config(state="normal")
-        self.stop_button.config(state="disabled")
-
-        self.status.config(
-            text="● GRABACIÓN TERMINADA",
-            fg=ACCENT
-        )
-
-        self.timer.config(text="00:00:00")
-
-        if self.errors:
-            messagebox.showwarning(
-                "LaPauta Capture",
-                "El vídeo se guardó, pero hubo problemas "
-                "con alguna fuente de audio:\n\n"
-                + "\n".join(self.errors)
-                + "\n\nArchivo:\n" + path
-            )
-        else:
-            messagebox.showinfo(
-                "LaPauta Capture Studio",
-                "Grabación guardada correctamente:\n\n"
-                + path
-            )
-
-    def recording_failed(self, error):
-
-        self.recording = False
-
-        self.start_button.config(state="normal")
-        self.stop_button.config(state="disabled")
-
-        self.status.config(
-            text="● ERROR DE GRABACIÓN",
-            fg=RED
-        )
-
-        messagebox.showerror(
-            "Error",
-            "No se pudo completar la grabación:\n\n" + error
-        )
-
-    def close_app(self):
-
-        if self.recording:
-            if messagebox.askyesno(
-                "LaPauta Capture",
-                "¿Deseas detener la grabación y cerrar?"
-            ):
-                self.stop_recording()
-                self.root.after(1000, self.close_app)
+    def stop_recording(self):
+        if not self.recording:
             return
 
-        self.root.destroy()
+        self.stop_button.config(state="disabled")
+        self.set_status("Deteniendo grabación...")
+
+        self.stop_event.set()
+        self.close_audio()
+
+    def capture_finished(self):
+        if self.capture_error:
+            self.recording = False
+            self.close_audio()
+
+            self.start_button.config(state="normal")
+            self.stop_button.config(state="disabled")
+
+            messagebox.showerror(
+                "Error de grabación",
+                self.capture_error
+            )
+
+            self.set_status("La grabación no pudo completarse")
+            return
+
+        self.set_status("Preparando video MP4...")
+
+        threading.Thread(
+            target=self.finalize_video,
+            daemon=True
+        ).start()
+
+    def finalize_video(self):
+        try:
+            ffmpeg = find_ffmpeg()
+
+            if not ffmpeg:
+                raise RuntimeError(
+                    "No se encontró ffmpeg.exe."
+                )
+
+            if not os.path.isfile(self.video_path):
+                raise RuntimeError(
+                    "No se encontró el video temporal."
+                )
+
+            command = [
+                ffmpeg,
+                "-y",
+                "-i", self.video_path
+            ]
+
+            audio_exists = (
+                self.audio_path is not None
+                and os.path.isfile(self.audio_path)
+                and os.path.getsize(self.audio_path) > 44
+            )
+
+            if audio_exists:
+                command.extend([
+                    "-i", self.audio_path,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:a", "aac",
+                    "-b:a", "64k",
+                    "-shortest"
+                ])
+            else:
+                command.extend(["-an"])
+
+            command.extend([
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",
+                "-pix_fmt", "yuv420p",
+                "-r", str(FPS),
+                "-movflags", "+faststart",
+                self.output_path
+            ])
+
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                creationflags=getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0
+                )
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    result.stderr[-2500:]
+                    if result.stderr
+                    else "FFmpeg no pudo crear el MP4."
+                )
+
+            self.root.after(
+                0,
+                self.finish_success
+            )
+
+        except Exception as error:
+            self.root.after(
+                0,
+                lambda: self.finish_error(str(error))
+            )
+
+    def finish_success(self):
+        self.recording = False
+
+        self.start_button.config(state="normal")
+        self.stop_button.config(state="disabled")
+
+        self.set_status("¡Grabación guardada!")
+
+        messagebox.showinfo(
+            "La Pauta Capture",
+            "Grabación guardada correctamente:\n\n"
+            + self.output_path
+        )
+
+        if self.temp_dir:
+            shutil.rmtree(
+                self.temp_dir,
+                ignore_errors=True
+            )
+
+        self.set_status("Listo para grabar")
+
+    def finish_error(self, error):
+        self.recording = False
+
+        self.start_button.config(state="normal")
+        self.stop_button.config(state="disabled")
+
+        self.set_status("Error al guardar")
+
+        messagebox.showerror(
+            "Error al crear el MP4",
+            error
+        )
 
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = LaPautaCapture(root)
     root.mainloop()
-        
