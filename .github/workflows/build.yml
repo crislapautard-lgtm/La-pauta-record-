@@ -1,5 +1,4 @@
-
-name: Crear La Pauta Capture
+ name: Crear La Pauta Capture
 
 on:
   push:
@@ -28,7 +27,7 @@ jobs:
       - name: Verificar módulos
         shell: pwsh
         run: |
-          python -c "import numpy, cv2, mss, sounddevice, soundfile; print('MODULOS CORRECTOS')"
+          python -c "import numpy, cv2, mss, sounddevice, soundfile, soundcard; print('TODOS LOS MODULOS CORRECTOS')"
 
       - name: Descargar FFmpeg
         shell: pwsh
@@ -67,6 +66,8 @@ jobs:
             --collect-all mss `
             --collect-all sounddevice `
             --collect-all soundfile `
+            --collect-all soundcard `
+            --collect-all cffi `
             --hidden-import _cffi_backend `
             main.py
 
@@ -76,7 +77,8 @@ jobs:
 
       - name: Instalar Inno Setup
         shell: pwsh
-        run: choco install innosetup -y
+        run: |
+          choco install innosetup -y
 
       - name: Crear carpeta del instalador
         shell: pwsh
@@ -103,4 +105,3 @@ jobs:
           path: installer_output/LaPautaCaptureSetup.exe
           if-no-files-found: error
           retention-days: 14
-          
