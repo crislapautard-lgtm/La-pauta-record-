@@ -1,5 +1,5 @@
 
-name: LaPauta Capture Studio Build
+name: LaPauta Capture Windows Build
 
 on:
   workflow_dispatch:
@@ -18,41 +18,69 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Python
+      - name: Instalar Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Actualizar herramientas
+      - name: Actualizar pip
         run: python -m pip install --upgrade pip
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Comprobar bibliotecas
+        run: |
+          python -c "import numpy; print('NUMPY:', numpy.__version__)"
+          python -c "import cv2; print('OPENCV:', cv2.__version__)"
+          python -c "import mss, sounddevice, soundfile; print('AUDIO Y CAPTURA OK')"
+
+      - name: Descargar FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
+            -OutFile ffmpeg.zip
+
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extract -Force
+
+          $file = Get-ChildItem ffmpeg_extract -Filter ffmpeg.exe -Recurse |
+            Select-Object -First 1
+
+          if (-not $file) {
+            throw "No se encontró ffmpeg.exe"
+          }
+
+          Copy-Item $file.FullName ffmpeg.exe
 
       - name: Compilar programa
         run: >
           pyinstaller
           --noconfirm
           --clean
-          --windowed
           --onefile
-          --name LaPautaCaptureStudio
-          --collect-all imageio_ffmpeg
-          --collect-all soundcard
+          --noconsole
+          --name LaPautaCapture
+          --add-binary "ffmpeg.exe;."
+          --collect-all numpy
+          --collect-all cv2
+          --collect-all sounddevice
+          --collect-all soundfile
           --collect-all mss
           main.py
 
       - name: Instalar Inno Setup
-        run: choco install innosetup -y
+        run: choco install innosetup -y --no-progress
 
       - name: Crear instalador
-        run: iscc Instalador.iss
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "instalador.iss"
 
       - name: Publicar archivos
         uses: actions/upload-artifact@v4
         with:
-          name: LaPauta-Capture-Studio-Windows
+          name: LaPautaCapture-Windows
           path: |
-            dist/LaPautaCaptureStudio.exe
-            installer/LaPautaCaptureStudio-Setup.exe
-            
+            dist/LaPautaCapture.exe
+            installer/LaPautaCaptureSetup.exe
