@@ -6,7 +6,6 @@ from datetime import datetime
 print("LA PAUTA CAPTURE - CALIDAD SUAVE - PC DE CARTON 4GB RAM")
 print("")
 
-# === TODOS LOS DRIVERS ===
 hostapis = sd.query_hostapis()
 print("=== DRIVERS DE AUDIO ===")
 for i, api in enumerate(hostapis):
@@ -46,7 +45,6 @@ eleccion = int(input("Escribe el NUMERO de tu tarjeta: "))
 device_info = sd.query_devices(eleccion)
 print(f"Listo: {device_info['name']} por {api_info['name']}")
 
-# === CONFIG CALIDAD SUAVE - NO FUERZA LA PC ===
 samplerate = 22050
 canales = 1
 FPS = 6
@@ -123,7 +121,6 @@ if audio_data:
     os.remove(video_solo)
     os.remove(audio_solo)
     print(f"LISTO! Guardado en: {final}")
-    print("Calidad suave - Liviano para 4GB RAM / 2GB Procesador")
 else:
     print(f"Solo video: {video_solo}")
 
