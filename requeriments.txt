@@ -1,6 +1,9 @@
+
+numpy
 mss
 opencv-python
-numpy
-pyinstaller
-sounddevice
+Pillow
+imageio-ffmpeg
+soundcard
 soundfile
+pyinstaller
