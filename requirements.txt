@@ -1,9 +1,7 @@
 
-numpy
-mss
-opencv-python
-Pillow
-imageio-ffmpeg
-soundcard
-soundfile
-pyinstaller
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+mss==9.0.2
+pyinstaller==6.11.1
+sounddevice==0.5.1
+soundfile==0.13.1
