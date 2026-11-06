@@ -1,0 +1,32 @@
+name: Crear La Pauta Capture
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Descargar FFmpeg
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
+          Copy-Item ffmpeg_temp\ffmpeg-*-essentials_build\bin\ffmpeg.exe -Destination .
+      - name: Crear EXE La Pauta Capture
+        run: pyinstaller --onefile --noconsole --name LaPautaCapture --add-binary "ffmpeg.exe;." main.py
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y
+      - name: Crear Instalador
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador.iss'
+      - name: Subir Instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaPautaCaptureSetup
+          path: dist/LaPautaCaptureSetup.exe
