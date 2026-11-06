@@ -1,8 +1,8 @@
-
 numpy==1.26.4
 opencv-python-headless==4.8.1.78
 mss==9.0.1
 sounddevice==0.4.6
 soundfile==0.12.1
+SoundCard==0.4.6
 cffi==1.17.1
 pyinstaller==6.10.0
