@@ -1,29 +1,28 @@
 
-#define MyAppName "LaPauta Capture Studio"
-#define MyAppVersion "1.0.0"
+#define MyAppName "La Pauta Capture"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "LaPauta Audio"
 
 [Setup]
-AppId={{8D2A5B21-77F4-4A12-9D10-583104290001}
+AppId={{58310429-1073-4072-9080-583104290001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\LaPauta Capture Studio
-DefaultGroupName=LaPauta Capture Studio
+DefaultDirName={autopf}\LaPauta Capture
+DefaultGroupName=LaPauta Capture
 OutputDir=installer
-OutputBaseFilename=LaPautaCaptureStudio-Setup
+OutputBaseFilename=LaPautaCaptureSetup
 Compression=lzma2
 SolidCompression=yes
-ArchitecturesInstallIn64BitMode=x64
 WizardStyle=modern
-UninstallDisplayIcon={app}\LaPautaCaptureStudio.exe
+ArchitecturesInstallIn64BitMode=x64
 
 [Files]
-Source: "dist\LaPautaCaptureStudio.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\LaPautaCapture.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\LaPauta Capture Studio"; Filename: "{app}\LaPautaCaptureStudio.exe"
-Name: "{autodesktop}\LaPauta Capture Studio"; Filename: "{app}\LaPautaCaptureStudio.exe"
+Name: "{autoprograms}\LaPauta Capture"; Filename: "{app}\LaPautaCapture.exe"
+Name: "{autodesktop}\LaPauta Capture"; Filename: "{app}\LaPautaCapture.exe"
 
 [Run]
-Filename: "{app}\LaPautaCaptureStudio.exe"; Description: "Abrir LaPauta Capture Studio"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\LaPautaCapture.exe"; Description: "Abrir LaPauta Capture"; Flags: postinstall nowait skipifsilent
