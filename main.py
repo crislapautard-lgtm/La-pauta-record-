@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -16,14 +15,12 @@ import sounddevice as sd
 import soundfile as sf
 import soundcard as sc
 
-
 APP_NAME = "LA PAUTA CAPTURE STUDIO"
 
 FPS = 6
 SCREEN_SCALE = 0.35
 AUDIO_RATE = 48000
 OUTPUT_RATE = 22050
-
 
 def find_ffmpeg():
     paths = []
@@ -45,7 +42,6 @@ def find_ffmpeg():
 
     return shutil.which("ffmpeg")
 
-
 class LaPautaCapture:
 
     def __init__(self, root):
@@ -60,6 +56,7 @@ class LaPautaCapture:
 
         self.capture_thread = None
         self.loopback_thread = None
+        self.floating_window = None
 
         self.input_stream = None
         self.input_file = None
@@ -82,10 +79,6 @@ class LaPautaCapture:
         self.refresh_devices()
 
         self.root.protocol("WM_DELETE_WINDOW", self.close_app)
-
-    # --------------------------------------------------
-    # INTERFAZ
-    # --------------------------------------------------
 
     def create_interface(self):
 
@@ -227,8 +220,6 @@ class LaPautaCapture:
             bg="#191e24"
         ).pack(anchor="w", padx=13, pady=(10, 8))
 
-        # SALIDA DE WINDOWS
-
         tk.Label(
             panel,
             text="AUDIO DEL PC / DAW (WASAPI LOOPBACK)",
@@ -246,8 +237,6 @@ class LaPautaCapture:
         self.loopback_combo.pack(
             fill="x", padx=13, pady=(4, 10)
         )
-
-        # ENTRADA DE AUDIO
 
         tk.Label(
             panel,
@@ -282,9 +271,54 @@ class LaPautaCapture:
             anchor="e", padx=13, pady=(0, 10)
         )
 
-    # --------------------------------------------------
-    # DETECTAR DISPOSITIVOS
-    # --------------------------------------------------
+    def create_floating_stop(self):
+        if self.floating_window is not None:
+            try:
+                if self.floating_window.winfo_exists():
+                    return
+            except Exception:
+                pass
+
+        win = tk.Toplevel(self.root)
+        self.floating_window = win
+        win.title("GRABANDO - LA PAUTA")
+        win.geometry("310x90+20+20")
+        win.configure(bg="#1a1a1a")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+
+        tk.Label(
+            win,
+            text="● GRABANDO...",
+            font=("Arial", 9, "bold"),
+            fg="#ff4444",
+            bg="#1a1a1a"
+        ).pack(pady=(10, 5))
+
+        btn = tk.Button(
+            win,
+            text="■  DETENER Y GUARDAR",
+            font=("Arial", 11, "bold"),
+            bg="#d94b50",
+            fg="white",
+            activebackground="#ff5a5a",
+            relief="flat",
+            width=26,
+            height=1,
+            cursor="hand2",
+            command=self.stop_recording
+        )
+        btn.pack(pady=5, padx=15, fill="x")
+
+        win.protocol("WM_DELETE_WINDOW", self.stop_recording)
+
+    def destroy_floating_stop(self):
+        if self.floating_window is not None:
+            try:
+                self.floating_window.destroy()
+            except Exception:
+                pass
+            self.floating_window = None
 
     def refresh_devices(self):
 
@@ -391,10 +425,6 @@ class LaPautaCapture:
                 f"{len(self.loopback_devices)} salidas"
             )
 
-    # --------------------------------------------------
-    # GRABACIÓN DE ENTRADA
-    # --------------------------------------------------
-
     def start_input_audio(self):
 
         selected = self.input_combo.get()
@@ -405,8 +435,6 @@ class LaPautaCapture:
         device = self.input_devices[selected]
 
         channels = min(2, device["channels"])
-
-        # Comprobar frecuencia compatible
 
         rate = AUDIO_RATE
 
@@ -460,10 +488,6 @@ class LaPautaCapture:
         self.input_stream.start()
 
         return True
-
-    # --------------------------------------------------
-    # GRABACIÓN DE AUDIO DEL PC
-    # --------------------------------------------------
 
     def start_loopback_audio(self):
 
@@ -527,10 +551,6 @@ class LaPautaCapture:
             return False
 
         return True
-
-    # --------------------------------------------------
-    # INICIAR
-    # --------------------------------------------------
 
     def start_recording(self):
 
@@ -605,6 +625,8 @@ class LaPautaCapture:
             bg="#d94b50"
         )
 
+        self.create_floating_stop()
+
         if audio_messages:
             self.set_status(
                 "Grabando con audio parcialmente disponible"
@@ -627,10 +649,6 @@ class LaPautaCapture:
         )
 
         self.capture_thread.start()
-
-    # --------------------------------------------------
-    # CAPTURA DE PANTALLA
-    # --------------------------------------------------
 
     def capture_screen(self):
 
@@ -714,10 +732,6 @@ class LaPautaCapture:
                 self.capture_finished
             )
 
-    # --------------------------------------------------
-    # DETENER AUDIO
-    # --------------------------------------------------
-
     def close_audio(self):
 
         if self.input_stream is not None:
@@ -761,246 +775,4 @@ class LaPautaCapture:
 
         self.stop_button.config(state="disabled")
 
-        self.set_status(
-            "DETENIENDO GRABACIÓN..."
-        )
-
-        self.stop_event.set()
-
-    # --------------------------------------------------
-    # FINALIZAR CAPTURA
-    # --------------------------------------------------
-
-    def capture_finished(self):
-
-        self.close_audio()
-
-        if self.capture_error:
-
-            self.recording = False
-
-            self.start_button.config(state="normal")
-            self.stop_button.config(state="disabled")
-
-            messagebox.showerror(
-                "Error de grabación",
-                self.capture_error
-            )
-
-            self.set_status("Error de captura")
-            return
-
-        self.set_status(
-            "PREPARANDO VIDEO Y MEZCLANDO AUDIO..."
-        )
-
-        threading.Thread(
-            target=self.finalize_video,
-            daemon=True
-        ).start()
-
-    # --------------------------------------------------
-    # CREAR MP4 Y MEZCLAR AUDIO
-    # --------------------------------------------------
-
-    def finalize_video(self):
-
-        try:
-            ffmpeg = find_ffmpeg()
-
-            if not ffmpeg:
-                raise RuntimeError(
-                    "No se encontró FFmpeg."
-                )
-
-            if not os.path.isfile(self.video_path):
-                raise RuntimeError(
-                    "No se encontró el video temporal."
-                )
-
-            command = [
-                ffmpeg,
-                "-y",
-                "-i", self.video_path
-            ]
-
-            audio_inputs = []
-
-            for path in [
-                self.loopback_path,
-                self.input_path
-            ]:
-
-                if (
-                    path
-                    and os.path.isfile(path)
-                    and os.path.getsize(path) > 44
-                ):
-
-                    audio_inputs.append(path)
-
-            for path in audio_inputs:
-                command.extend(["-i", path])
-
-            if len(audio_inputs) == 2:
-
-                filter_complex = (
-                    "[1:a]aresample=22050,"
-                    "aformat=channel_layouts=mono[a1];"
-                    "[2:a]aresample=22050,"
-                    "aformat=channel_layouts=mono[a2];"
-                    "[a1][a2]amix=inputs=2:"
-                    "duration=longest:"
-                    "dropout_transition=2,"
-                    "alimiter=limit=0.95[aout]"
-                )
-
-                command.extend([
-                    "-filter_complex",
-                    filter_complex,
-                    "-map", "0:v:0",
-                    "-map", "[aout]"
-                ])
-
-            elif len(audio_inputs) == 1:
-
-                filter_complex = (
-                    "[1:a]aresample=22050,"
-                    "aformat=channel_layouts=mono[aout]"
-                )
-
-                command.extend([
-                    "-filter_complex",
-                    filter_complex,
-                    "-map", "0:v:0",
-                    "-map", "[aout]"
-                ])
-
-            else:
-                command.extend([
-                    "-map", "0:v:0",
-                    "-an"
-                ])
-
-            command.extend([
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-crf", "28",
-                "-pix_fmt", "yuv420p",
-                "-r", str(FPS),
-                "-c:a", "aac",
-                "-b:a", "96k",
-                "-shortest",
-                "-movflags", "+faststart",
-                self.output_path
-            ])
-
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                creationflags=getattr(
-                    subprocess,
-                    "CREATE_NO_WINDOW",
-                    0
-                )
-            )
-
-            if result.returncode != 0:
-                raise RuntimeError(
-                    result.stderr[-3000:]
-                    if result.stderr
-                    else "FFmpeg no pudo crear el MP4."
-                )
-
-            self.root.after(
-                0,
-                self.finish_success
-            )
-
-        except Exception as error:
-
-            self.root.after(
-                0,
-                lambda: self.finish_error(str(error))
-            )
-
-    # --------------------------------------------------
-    # RESULTADOS
-    # --------------------------------------------------
-
-    def finish_success(self):
-
-        self.recording = False
-
-        self.start_button.config(state="normal")
-
-        self.stop_button.config(
-            state="disabled",
-            bg="#303942"
-        )
-
-        messagebox.showinfo(
-            "LA PAUTA CAPTURE",
-            "¡Grabación guardada!\n\n" +
-            self.output_path
-        )
-
-        if self.temp_dir:
-            shutil.rmtree(
-                self.temp_dir,
-                ignore_errors=True
-            )
-
-        self.set_status(
-            "● LISTO PARA GRABAR"
-        )
-
-    def finish_error(self, error):
-
-        self.recording = False
-
-        self.start_button.config(state="normal")
-
-        self.stop_button.config(
-            state="disabled",
-            bg="#303942"
-        )
-
-        self.set_status(
-            "ERROR AL GUARDAR"
-        )
-
-        messagebox.showerror(
-            "Error al crear el MP4",
-            error
-        )
-
-    def set_status(self, message):
-
-        self.status.config(text=message)
-
-    def close_app(self):
-
-        if self.recording:
-
-            if not messagebox.askyesno(
-                "Salir",
-                "Hay una grabación activa. ¿Deseas detenerla?"
-            ):
-                return
-
-            self.stop_event.set()
-            self.root.destroy()
-
-        else:
-            self.root.destroy()
-
-
-if __name__ == "__main__":
-
-    root = tk.Tk()
-
-    app = LaPautaCapture(root)
-
-    root.mainloop()
+        self.de
