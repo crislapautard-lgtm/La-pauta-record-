@@ -1,10 +1,10 @@
-
 name: Crear La Pauta Capture
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build:
@@ -34,74 +34,26 @@ jobs:
       - name: Descargar FFmpeg
         shell: pwsh
         run: |
-          Invoke-WebRequest `
-            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
-            -OutFile ffmpeg.zip
-
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp
-
-          $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter ffmpeg.exe -Recurse |
-            Select-Object -First 1
-
-          if (-not $ffmpeg) {
-            throw "ERROR: No se encontró ffmpeg.exe"
-          }
-
-          Copy-Item $ffmpeg.FullName -Destination ffmpeg.exe
-
-          if (-not (Test-Path "ffmpeg.exe")) {
-            throw "ERROR: No se pudo copiar FFmpeg"
-          }
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_temp -Force
+          $ffmpeg = Get-ChildItem -Path ffmpeg_temp -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ERROR: No se encontro ffmpeg.exe" }
+          Copy-Item $ffmpeg.FullName -Destination ffmpeg.exe -Force
+          if (-not (Test-Path "ffmpeg.exe")) { throw "ERROR: No se pudo copiar FFmpeg" }
+          Write-Host "FFmpeg OK"
 
       - name: Crear EXE La Pauta Capture
         shell: pwsh
         run: |
-          python -m PyInstaller `
-            --noconfirm `
-            --clean `
-            --onefile `
-            --noconsole `
-            --name LaPautaCapture `
-            --add-binary "ffmpeg.exe;." `
-            --collect-all numpy `
-            --collect-all cv2 `
-            --collect-all mss `
-            --collect-all sounddevice `
-            --collect-all soundfile `
-            --collect-all soundcard `
-            --collect-all cffi `
-            --hidden-import _cffi_backend `
-            main.py
+          python -m PyInstaller --noconfirm --clean --onefile --noconsole --name LaPautaCapture --add-data "ffmpeg.exe;." --collect-all numpy --collect-all cv2 --collect-all mss --collect-all sounddevice --collect-all soundfile --collect-all soundcard --collect-all cffi --hidden-import _cffi_backend main.py
+          if (-not (Test-Path "dist/LaPautaCapture.exe")) { throw "ERROR: PyInstaller no creo LaPautaCapture.exe" }
+          Write-Host "EXE CREADO OK"
+          Get-ChildItem dist
 
-          if (-not (Test-Path "dist\LaPautaCapture.exe")) {
-            throw "ERROR: PyInstaller no creó LaPautaCapture.exe"
-          }
-
-      - name: Instalar Inno Setup
-        shell: pwsh
-        run: |
-          choco install innosetup -y
-
-      - name: Crear instalador
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"dist" /F"LaPautaCaptureSetup" instalador.iss
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "ERROR: Inno Setup no pudo crear el instalador"
-          }
-
-          if (-not (Test-Path "dist\LaPautaCaptureSetup.exe")) {
-            throw "ERROR: No se encontró el instalador generado"
-          }
-
-      - name: Subir instalador a Artifacts
+      - name: Subir EXE arreglado a Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LaPautaCaptureSetup
-          path: dist/LaPautaCaptureSetup.exe
+          name: LaPautaCapture
+          path: dist/LaPautaCapture.exe
           if-no-files-found: error
           retention-days: 14
-          
